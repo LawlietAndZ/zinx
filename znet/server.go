@@ -19,7 +19,11 @@ type Server struct {
 	////当前Server由用户绑定的回调router,也就是Server注册的链接对应的处理业务
 	//Router ziface.IRouter
 	//当前Server的消息管理模块，用来绑定MsgId和对应的处理方法
-	MsgHandler ziface.IMsgHandle
+	MsgHandler     ziface.IMsgHandle
+	WorkerPoolSize uint32
+
+	//当前Server的链接管理器
+	ConnMgr ziface.IConnManager
 }
 
 func (s *Server) AddRouter(msgId uint32, router ziface.IRouter) {
@@ -45,6 +49,8 @@ func (s *Server) Start() {
 		utils.GlobalObject.MaxConn,
 		utils.GlobalObject.MaxPacketSize)
 	go func() {
+		//0 启动worker工作池机制
+		s.MsgHandler.StartWorkerPool()
 		//获取addr
 		addr, err := net.ResolveTCPAddr(s.IPVersion, fmt.Sprintf("%s:%d", s.IP, s.Port))
 		if err != nil {
@@ -70,8 +76,13 @@ func (s *Server) Start() {
 			var cid uint32
 			cid = 0
 
+			if s.GetConnMgr().Len() >= utils.GlobalObject.MaxConn {
+				conn.Close()
+				continue
+			}
+
 			//将处理新业务的方法和conn进行绑定
-			dealConn := NewConntion(conn, cid, s.MsgHandler)
+			dealConn := NewConntion(s, conn, cid, s.MsgHandler)
 			cid++
 
 			go dealConn.Start()
@@ -97,6 +108,8 @@ func (s *Server) Start() {
 }
 
 func (s *Server) Stop() {
+	fmt.Println("server stop")
+	s.GetConnMgr().ClearConn()
 
 }
 
@@ -108,15 +121,23 @@ func (s *Server) Server() {
 	select {}
 }
 
+// GetConnMgr 得到链接管理
+func (s *Server) GetConnMgr() ziface.IConnManager {
+	return s.ConnMgr
+}
+
 // NewServer 初始化方法，读取conf/zinx.json 中的配置来初始化
 func NewServer() ziface.IServer {
 	utils.GlobalObject.Reload()
+
 	s := &Server{
-		Name:       utils.GlobalObject.Name,
-		IPVersion:  "tcp4",
-		IP:         utils.GlobalObject.Host,
-		Port:       utils.GlobalObject.TcpPort,
-		MsgHandler: NewMsgHandle(),
+		Name:           utils.GlobalObject.Name,
+		IPVersion:      "tcp4",
+		IP:             utils.GlobalObject.Host,
+		Port:           utils.GlobalObject.TcpPort,
+		MsgHandler:     NewMsgHandle(),
+		WorkerPoolSize: utils.GlobalObject.WorkerPoolSize,
+		ConnMgr:        NewConnManager(), //创建ConnManager
 	}
 	return s
 }

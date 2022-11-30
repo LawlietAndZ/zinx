@@ -34,6 +34,7 @@ func (mh *MsgHandle) StartOneWorker(workerID int, taskQueue chan ziface.IRequest
 		select {
 		//有消息则取出队列的Request，并执行绑定的业务方法
 		case request := <-taskQueue:
+			fmt.Println("\n\n\nhere")
 			mh.DoMsgHandler(request)
 		}
 	}

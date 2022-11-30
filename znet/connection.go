@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"zinx/utils"
 	"zinx/ziface"
 )
 
@@ -23,6 +24,9 @@ type Connection struct {
 
 	//无缓冲管道，用于读、写两个goroutine之间的消息通信
 	msgChan chan []byte
+
+	//当前Conn属于那个server
+	TCPServer ziface.IServer
 }
 
 // SendMsg 直接将Message数据发送数据给远程的TCP客户端
@@ -50,7 +54,7 @@ func (c *Connection) GetTCPConnection() *net.TCPConn {
 }
 
 // NewConntion 创建连接的方法
-func NewConntion(conn *net.TCPConn, connID uint32, msgHandler ziface.IMsgHandle) *Connection {
+func NewConntion(server ziface.IServer, conn *net.TCPConn, connID uint32, msgHandler ziface.IMsgHandle) *Connection {
 	c := &Connection{
 		Conn:       conn,
 		ConnID:     connID,
@@ -58,7 +62,10 @@ func NewConntion(conn *net.TCPConn, connID uint32, msgHandler ziface.IMsgHandle)
 		MsgHandler: msgHandler,
 		ExitChan:   make(chan bool, 1),
 		msgChan:    make(chan []byte), //msgChan初始化
+		TCPServer:  server,
 	}
+	//将conn加到connManager方法
+	server.GetConnMgr().Add(c)
 
 	return c
 }
@@ -105,7 +112,13 @@ func (c *Connection) StartReader() {
 			msg:  msg, //将之前的buf 改成 msg
 		}
 		//从路由Routers 中找到注册绑定Conn的对应Handle
-		go c.MsgHandler.DoMsgHandler(&req)
+		if utils.GlobalObject.WorkerPoolSize > 0 {
+			//已经启动工作池机制，将消息交给Worker处理
+			c.MsgHandler.SendMsgToTaskQueue(&req)
+		} else {
+			//从绑定好的消息和对应的处理方法中执行对应的Handle方法
+			go c.MsgHandler.DoMsgHandler(&req)
+		}
 	}
 }
 
@@ -148,6 +161,8 @@ func (c *Connection) Stop() {
 	c.Conn.Close()
 
 	c.ExitChan <- true
+
+	c.TCPServer.GetConnMgr().Remove(c)
 	//回收资源
 	close(c.ExitChan)
 	close(c.msgChan)
